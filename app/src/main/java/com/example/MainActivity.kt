@@ -90,20 +90,29 @@ class MainActivity : ComponentActivity() {
     private fun handleNotificationIntent(intent: android.content.Intent?, onProcessed: (() -> Unit)? = null) {
         if (intent == null) return
         val openDetail = intent.getBooleanExtra("open_job_detail", false)
-        val postId = intent.getStringExtra("post_id") ?: intent.getStringExtra("postId") ?: intent.getStringExtra("id") ?: ""
-        val postUrl = intent.getStringExtra("post_url") ?: intent.getStringExtra("postUrl") ?: intent.getStringExtra("url") ?: ""
-        val jobTitle = intent.getStringExtra("job_title") ?: intent.getStringExtra("jobTitle") ?: intent.getStringExtra("title") ?: ""
-        val category = intent.getStringExtra("category")
+        val postId = intent.getStringExtra("post_id") ?: intent.getStringExtra("postId") ?: intent.getStringExtra("id") ?: intent.getStringExtra("slug") ?: ""
+        val postUrl = intent.getStringExtra("post_url") ?: intent.getStringExtra("postUrl") ?: intent.getStringExtra("url") ?: intent.getStringExtra("applyUrl") ?: intent.getStringExtra("apply_url") ?: intent.getStringExtra("link") ?: ""
+        val jobTitle = intent.getStringExtra("job_title")
+            ?: intent.getStringExtra("jobTitle")
+            ?: intent.getStringExtra("title")
+            ?: intent.getStringExtra("gcm.n.title")
+            ?: intent.getStringExtra("gcm.notification.title")
+            ?: intent.getStringExtra("post_title")
+            ?: intent.getStringExtra("name_of_post")
+            ?: intent.getStringExtra("heading")
+            ?: ""
+        val category = intent.getStringExtra("category") ?: intent.getStringExtra("tag") ?: intent.getStringExtra("cat") ?: "Latest Jobs"
         val applyUrl = intent.getStringExtra("apply_url") ?: intent.getStringExtra("applyUrl") ?: postUrl
-        val description = intent.getStringExtra("description") ?: intent.getStringExtra("body")
-        val isFcmNotification = intent.hasExtra("google.message_id") || intent.hasExtra("gcm.n.e") || intent.hasExtra("gcm.notification.e")
+        val description = intent.getStringExtra("description")
+            ?: intent.getStringExtra("body")
+            ?: intent.getStringExtra("gcm.n.body")
+            ?: intent.getStringExtra("gcm.notification.body")
+            ?: intent.getStringExtra("message")
+            ?: intent.getStringExtra("short_info")
+        val isFcmNotification = intent.hasExtra("google.message_id") || intent.hasExtra("gcm.n.e") || intent.hasExtra("gcm.notification.e") || intent.hasExtra("from")
 
         if (openDetail || postId.isNotBlank() || postUrl.isNotBlank() || jobTitle.isNotBlank() || isFcmNotification) {
-            android.util.Log.d("FCM_Notification", "MainActivity launched from notification")
-            android.util.Log.d("FCM_Notification", "Notification intent received")
-            android.util.Log.d("FCM_Notification", "postId: $postId")
-            android.util.Log.d("FCM_Notification", "postUrl: $postUrl")
-            android.util.Log.d("FCM_Notification", "jobTitle: $jobTitle")
+            android.util.Log.d("FCM_Notification", "MainActivity launched from notification: postId=$postId, postUrl=$postUrl, jobTitle=$jobTitle")
 
             viewModel.openJobDetailFromNotification(
                 postId = postId,
@@ -174,21 +183,19 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Auto-prompt official Android 13+ POST_NOTIFICATIONS permission dialog on first app launch & subscribe if granted
+                // Initialize FCM topic subscriptions and prompt Android 13+ permission dialog if needed
                 LaunchedEffect(Unit) {
+                    com.example.data.service.MyFirebaseMessagingService.subscribeAllTopics(context)
+
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
                         val prefs = context.getSharedPreferences("fcm_sync_prefs", android.content.Context.MODE_PRIVATE)
                         val hasPrompted = prefs.getBoolean("has_prompted_system_notif", false)
                         val isGranted = context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
                         
-                        if (isGranted) {
-                            com.example.data.service.MyFirebaseMessagingService.subscribeAllTopics(context)
-                        } else if (!hasPrompted) {
+                        if (!isGranted && !hasPrompted) {
                             prefs.edit().putBoolean("has_prompted_system_notif", true).apply()
                             notifPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                         }
-                    } else {
-                        com.example.data.service.MyFirebaseMessagingService.subscribeAllTopics(context)
                     }
                 }
 
