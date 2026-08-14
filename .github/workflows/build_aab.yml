@@ -1,0 +1,99 @@
+name: Build Android App Bundle (AAB) & APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build AAB and APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Ensure Environment Files
+        run: |
+          if [ ! -f ".env" ]; then
+            if [ -f ".env.example" ]; then
+              cp .env.example .env
+            else
+              touch .env
+            fi
+          fi
+
+      - name: Restore or Generate Keystore
+        run: |
+          # 1. Restore release keystore if provided in GitHub Secrets
+          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
+            echo "Release keystore restored from secrets."
+          fi
+
+          # 2. Restore debug keystore if base64 file exists, otherwise generate one
+          if [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+            echo "Debug keystore restored from base64."
+          elif [ ! -f "debug.keystore" ]; then
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            echo "Generated new debug keystore."
+          fi
+
+      - name: Ensure Gradle Wrapper Executable
+        run: |
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+          fi
+
+      - name: Build Android App Bundle (AAB)
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew bundleRelease --stacktrace
+          else
+            gradle bundleRelease --stacktrace
+          fi
+
+      - name: Build APK (Release & Debug)
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleRelease assembleDebug --stacktrace
+          else
+            gradle assembleRelease assembleDebug --stacktrace
+          fi
+
+      - name: Upload Android App Bundle (AAB)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-bundle-aab
+          path: app/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-apks
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
