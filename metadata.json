@@ -1,0 +1,6 @@
+{
+  "name": "Sarkari Sewayojan",
+  "description": "Government job alerts, admit cards, exam results, and citizen services portal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
