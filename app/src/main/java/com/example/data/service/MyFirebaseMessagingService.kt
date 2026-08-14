@@ -97,11 +97,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         // Step 2: System notification posting
-        val isSystemNotificationEnabled = NotificationManagerCompat.from(applicationContext).areNotificationsEnabled()
         val prefs = applicationContext.getSharedPreferences("fcm_sync_prefs", Context.MODE_PRIVATE)
         val isAppNotificationEnabled = prefs.getBoolean("notifications_enabled", true)
 
-        if (isSystemNotificationEnabled && isAppNotificationEnabled) {
+        if (isAppNotificationEnabled) {
             serviceScope.launch {
                 showStatusBarNotification(
                     context = applicationContext,
@@ -116,7 +115,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 )
             }
         } else {
-            Log.d(TAG, "Notification skipped -> System enabled: $isSystemNotificationEnabled, App preference: $isAppNotificationEnabled")
+            Log.d(TAG, "Notification skipped -> User turned notifications OFF in app settings.")
         }
     }
 

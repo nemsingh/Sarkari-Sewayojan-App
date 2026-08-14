@@ -28,7 +28,10 @@ class SewayojanApp : Application() {
         // Create high priority notification channels early on process start
         createNotificationChannels()
 
-        // Subscribe to FCM push topics immediately
+        // Subscribe to FCM push topics immediately on process launch
+        MyFirebaseMessagingService.subscribeAllTopics(this)
+
+        // Also fetch token to guarantee connection with Firebase Gateway
         initFcmSubscriptions()
     }
 

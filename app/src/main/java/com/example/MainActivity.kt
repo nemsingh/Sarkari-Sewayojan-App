@@ -188,12 +188,8 @@ class MainActivity : ComponentActivity() {
                     com.example.data.service.MyFirebaseMessagingService.subscribeAllTopics(context)
 
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                        val prefs = context.getSharedPreferences("fcm_sync_prefs", android.content.Context.MODE_PRIVATE)
-                        val hasPrompted = prefs.getBoolean("has_prompted_system_notif", false)
                         val isGranted = context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                        
-                        if (!isGranted && !hasPrompted) {
-                            prefs.edit().putBoolean("has_prompted_system_notif", true).apply()
+                        if (!isGranted) {
                             notifPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                         }
                     }
