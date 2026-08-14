@@ -5,25 +5,25 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
-import android.graphics.Rect
-import android.graphics.RectF
 import com.example.MainActivity
+import com.example.R
 import com.example.data.repository.SewayojanRepository
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -37,10 +37,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val dataMap = remoteMessage.data
         val notificationObj = remoteMessage.notification
 
-        // Extract metadata and payload parameters
-        val type = dataMap["type"] ?: dataMap["action"] ?: "DATA_UPDATED"
-        val updateId = dataMap["update_id"] ?: dataMap["data_version"] ?: dataMap["version"] ?: ""
-
+        // Extract metadata and payload parameters from any admin panel schema
         val rawTitle = notificationObj?.title
             ?: dataMap["title"]
             ?: dataMap["jobTitle"]
@@ -52,6 +49,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             ?: dataMap["post_name"]
             ?: dataMap["title_hi"]
             ?: dataMap["name"]
+            ?: dataMap["alert_title"]
+            ?: dataMap["headline"]
             ?: ""
 
         val rawBody = notificationObj?.body
@@ -64,67 +63,64 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             ?: dataMap["content"]
             ?: dataMap["info"]
             ?: dataMap["msg"]
+            ?: dataMap["details"]
+            ?: dataMap["text"]
+            ?: dataMap["summary"]
             ?: ""
 
-        val category = dataMap["category"] ?: dataMap["tag"] ?: dataMap["cat"] ?: "Latest Jobs"
-        val postId = dataMap["postId"] ?: dataMap["post_id"] ?: dataMap["id"] ?: ""
-        val postUrl = dataMap["postUrl"] ?: dataMap["post_url"] ?: dataMap["url"] ?: dataMap["applyUrl"] ?: dataMap["apply_url"] ?: ""
+        val category = dataMap["category"] ?: dataMap["tag"] ?: dataMap["cat"] ?: dataMap["section"] ?: "Latest Jobs"
+        val postId = dataMap["postId"] ?: dataMap["post_id"] ?: dataMap["id"] ?: dataMap["slug"] ?: ""
+        val postUrl = dataMap["postUrl"] ?: dataMap["post_url"] ?: dataMap["url"] ?: dataMap["applyUrl"] ?: dataMap["apply_url"] ?: dataMap["link"] ?: ""
         val applyUrl = postUrl.ifBlank { dataMap["applyUrl"] ?: dataMap["post_slug"] ?: dataMap["apply_url"] ?: dataMap["url"] ?: dataMap["job_id"] ?: dataMap["slug"] ?: dataMap["link"] ?: "" }
         val specificJobTitle = dataMap["jobTitle"] ?: dataMap["job_title"] ?: dataMap["post_title"] ?: (if (notificationObj?.body != null && notificationObj.body!!.isNotBlank()) notificationObj.body!! else rawTitle)
+        val imageUrl = dataMap["image"] ?: dataMap["imageUrl"] ?: dataMap["image_url"] ?: dataMap["picture"] ?: dataMap["banner"] ?: dataMap["photo"] ?: notificationObj?.imageUrl?.toString() ?: ""
 
-        Log.d(TAG, "FCM Payload -> title: '$rawTitle', body: '$rawBody', category: '$category', postId: '$postId', postUrl: '$postUrl', applyUrl: '$applyUrl', specificJobTitle: '$specificJobTitle', updateId: '$updateId'")
+        Log.d(TAG, "FCM Payload -> title: '$rawTitle', body: '$rawBody', category: '$category', postId: '$postId', postUrl: '$postUrl', applyUrl: '$applyUrl', imageUrl: '$imageUrl'")
 
-        // Deduplication check: Avoid downloading JSON multiple times for the same update_id
-        val prefs = applicationContext.getSharedPreferences("fcm_sync_prefs", Context.MODE_PRIVATE)
-        val lastProcessedVersion = prefs.getString("last_processed_version", "")
-
-        val isDuplicate = !updateId.isNullOrBlank() && updateId == lastProcessedVersion
-
-        if (!updateId.isNullOrBlank()) {
-            prefs.edit().putString("last_processed_version", updateId).apply()
-        }
-
-        // Step 1: Trigger Vercel JSON sync into Room Database in background
-        if (!isDuplicate) {
-            Log.d(TAG, "New FCM update signal verified! Syncing Vercel JSON into Room DB...")
-            val repository = SewayojanRepository.getInstance(applicationContext)
-            serviceScope.launch {
-                try {
-                    repository.syncWithFirebase(forceFetchJson = true)
-                    Log.d(TAG, "Vercel JSON successfully updated in Room DB. ZERO Firestore reads used.")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error syncing Vercel JSON after FCM signal: ${e.message}")
-                }
+        // Step 1: Always trigger live sync to refresh Room Database with new post/job
+        serviceScope.launch {
+            try {
+                val repository = SewayojanRepository.getInstance(applicationContext)
+                repository.syncWithFirebase(forceFetchJson = true)
+                Log.d(TAG, "Background sync triggered successfully upon FCM signal.")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error syncing data after FCM message: ${e.message}")
             }
         }
 
-        // Step 2: Check System Permission & App Pref before showing Status Bar Notification
+        // Step 2: Check System Permission & App Preference before showing Status Bar Notification
+        val prefs = applicationContext.getSharedPreferences("fcm_sync_prefs", Context.MODE_PRIVATE)
         val isNotificationEnabled = prefs.getBoolean("notifications_enabled", true)
-        
-        // System level Android 13+ permission check is the final authority
+
         val isSystemPermissionGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            androidx.core.content.ContextCompat.checkSelfPermission(applicationContext, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                applicationContext,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         } else {
             true
         }
 
         if (isNotificationEnabled && isSystemPermissionGranted) {
-            showStatusBarNotification(
-                context = applicationContext,
-                title = rawTitle,
-                body = rawBody,
-                category = category,
-                applyUrl = applyUrl,
-                jobTitle = specificJobTitle,
-                postId = postId,
-                postUrl = postUrl
-            )
+            serviceScope.launch {
+                showStatusBarNotification(
+                    context = applicationContext,
+                    title = rawTitle,
+                    body = rawBody,
+                    category = category,
+                    applyUrl = applyUrl,
+                    jobTitle = specificJobTitle,
+                    postId = postId,
+                    postUrl = postUrl,
+                    imageUrl = imageUrl
+                )
+            }
         } else {
-            Log.d(TAG, "Status bar notification suppressed. App pref enabled: $isNotificationEnabled, OS Permission granted: $isSystemPermissionGranted")
+            Log.d(TAG, "Status bar notification suppressed. App pref: $isNotificationEnabled, OS Perm: $isSystemPermissionGranted")
         }
     }
 
-    private fun showStatusBarNotification(
+    private suspend fun showStatusBarNotification(
         context: Context,
         title: String,
         body: String,
@@ -132,28 +128,33 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         applyUrl: String,
         jobTitle: String,
         postId: String = "",
-        postUrl: String = ""
-    ) {
-        // Double safety: Verify system permission on Android 13+
+        postUrl: String = "",
+        imageUrl: String = ""
+    ) = withContext(Dispatchers.IO) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                Log.w(TAG, "Cannot post notification: POST_NOTIFICATIONS permission not granted by OS.")
-                return
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                return@withContext
             }
         }
 
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        // Create High Importance Notification Channel for Android 8.0+
+        // Create High Importance Notification Channel with Sound and Vibration
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Sarkari Sewayojan Job Alerts",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Notifications for new sarkari result, admit card, and job updates"
+                description = "Live notifications for Sarkari Result, Admit Card, Answer Key, and Latest Jobs"
                 enableVibration(true)
                 enableLights(true)
+                setShowBadge(true)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
             }
             notificationManager.createNotificationChannel(channel)
         }
@@ -167,10 +168,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             else -> "📢 New Update: Latest Jobs"
         }
 
-        val finalBody = if (body.isNotBlank()) body else "👉 Click Here to view detail"
+        val finalBody = if (body.isNotBlank()) body else "👉 Click here to check full details & apply online."
         val intentJobTitle = if (jobTitle.isNotBlank()) jobTitle else if (body.isNotBlank()) body else finalTitle
 
-        // Deep Link Intent to launch MainActivity and open exact job detail
+        // Deep Link Intent to launch MainActivity and open exact job detail modal
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("open_job_detail", true)
@@ -199,64 +200,120 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             pendingIntentFlags
         )
 
+        // Try downloading image bitmap if provided in payload
+        var bannerBitmap: Bitmap? = null
+        if (imageUrl.isNotBlank()) {
+            try {
+                val url = URL(imageUrl)
+                val connection = url.openConnection() as HttpURLConnection
+                connection.doInput = true
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+                connection.connect()
+                val input = connection.inputStream
+                bannerBitmap = BitmapFactory.decodeStream(input)
+                connection.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not download notification image: ${e.message}")
+            }
+        }
+
+        val appIconBitmap = try {
+            BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher)
+        } catch (_: Exception) {
+            null
+        }
+
+        val defaultSoundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+
         val notificationBuilder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(com.example.R.mipmap.ic_launcher)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(finalTitle)
             .setContentText(finalBody)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(finalBody))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+            .setSound(defaultSoundUri)
+            .setVibrate(longArrayOf(0, 250, 100, 250))
             .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setContentIntent(pendingIntent)
+
+        if (appIconBitmap != null) {
+            notificationBuilder.setLargeIcon(appIconBitmap)
+        }
+
+        if (bannerBitmap != null) {
+            notificationBuilder.setStyle(
+                NotificationCompat.BigPictureStyle()
+                    .bigPicture(bannerBitmap)
+                    .setSummaryText(finalBody)
+            )
+        } else {
+            notificationBuilder.setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText(finalBody)
+                    .setBigContentTitle(finalTitle)
+            )
+        }
 
         val notificationId = System.currentTimeMillis().toInt()
         notificationManager.notify(notificationId, notificationBuilder.build())
-        Log.d(TAG, "System Notification posted on Status Bar! Notification ID: $notificationId")
+        Log.d(TAG, "Status Bar Notification posted successfully! ID: $notificationId")
     }
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        Log.d(TAG, "New FCM Token generated: $token")
-        // Subscribe to 'all_users' ONLY if notification permission is granted by OS
+        Log.d(TAG, "New FCM Registration Token: $token")
         subscribeAllTopics(applicationContext)
     }
 
     companion object {
-        private const val TAG = "FCM_Sync_Service"
+        private const val TAG = "FCM_Notification"
         private const val CHANNEL_ID = "sewayojan_job_notifications"
+
+        // All standard topics used across Sarkari Sewayojan Admin Panel
+        val SUBSCRIBED_TOPICS = listOf(
+            "all_users",
+            "all_jobs",
+            "all",
+            "jobs",
+            "posts",
+            "data_updates",
+            "latest_jobs",
+            "admit_cards",
+            "results",
+            "notifications",
+            "updates",
+            "news",
+            "sewayojan",
+            "sewayojan_all"
+        )
 
         fun subscribeAllTopics(context: Context? = null) {
             try {
-                if (context != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    val hasPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-                        context,
-                        android.Manifest.permission.POST_NOTIFICATIONS
-                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                    
-                    if (!hasPermission) {
-                        Log.w(TAG, "Skipping FCM 'all_users' subscription: POST_NOTIFICATIONS permission not granted.")
-                        return
-                    }
+                val fcm = FirebaseMessaging.getInstance()
+                for (topic in SUBSCRIBED_TOPICS) {
+                    fcm.subscribeToTopic(topic)
+                        .addOnSuccessListener {
+                            Log.d(TAG, "FCM successfully subscribed to topic: $topic")
+                        }
+                        .addOnFailureListener { e ->
+                            Log.w(TAG, "FCM failed subscribing to topic '$topic': ${e.message}")
+                        }
                 }
-
-                val fcm = com.google.firebase.messaging.FirebaseMessaging.getInstance()
-                fcm.subscribeToTopic("all_users")
-                Log.d(TAG, "Subscribed to FCM 'all_users' topic successfully!")
+                Log.d(TAG, "All Admin Panel FCM topics subscription initialized.")
             } catch (e: Exception) {
-                Log.e(TAG, "FCM topic subscription failed: ${e.message}")
+                Log.e(TAG, "FCM topics subscription failed: ${e.message}")
             }
         }
 
         fun unsubscribeAllTopics() {
             try {
-                val fcm = com.google.firebase.messaging.FirebaseMessaging.getInstance()
-                fcm.unsubscribeFromTopic("all_users")
-                // Also clean up any legacy topic subscriptions
-                val legacyTopics = listOf("all_jobs", "all", "data_updates", "jobs", "posts", "latest_jobs", "admit_cards", "results", "notifications", "news", "updates")
-                for (topic in legacyTopics) {
+                val fcm = FirebaseMessaging.getInstance()
+                for (topic in SUBSCRIBED_TOPICS) {
                     fcm.unsubscribeFromTopic(topic)
                 }
-                Log.d(TAG, "Unsubscribed from FCM topics!")
+                Log.d(TAG, "Unsubscribed from all FCM topics.")
             } catch (e: Exception) {
                 Log.e(TAG, "FCM topic unsubscription failed: ${e.message}")
             }
