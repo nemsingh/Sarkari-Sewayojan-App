@@ -55,23 +55,13 @@ jobs:
             echo "Generated new debug keystore."
           fi
 
-      - name: Ensure Gradle Wrapper Executable
-        run: |
-          if [ -f "gradlew" ]; then
-            chmod +x gradlew
-          fi
-
       - name: Build Android App Bundle (AAB)
         env:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          if [ -f "./gradlew" ]; then
-            ./gradlew bundleRelease --stacktrace
-          else
-            gradle bundleRelease --stacktrace
-          fi
+          gradle bundleRelease --stacktrace
 
       - name: Build APK (Release & Debug)
         env:
@@ -79,11 +69,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: |
-          if [ -f "./gradlew" ]; then
-            ./gradlew assembleRelease assembleDebug --stacktrace
-          else
-            gradle assembleRelease assembleDebug --stacktrace
-          fi
+          gradle assembleRelease assembleDebug --stacktrace
 
       - name: Upload Android App Bundle (AAB)
         uses: actions/upload-artifact@v4
